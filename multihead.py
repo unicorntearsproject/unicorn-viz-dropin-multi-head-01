@@ -200,7 +200,7 @@ class MultiHeadController:
                 continue
             texture = sdl2.SDL_CreateTexture(
                 renderer,
-                sdl2.SDL_PIXELFORMAT_RGBA32,
+                sdl2.SDL_PIXELFORMAT_ARGB8888,
                 sdl2.SDL_TEXTUREACCESS_STREAMING,
                 source_w,
                 source_h,
@@ -237,7 +237,7 @@ class MultiHeadController:
                 sdl2.SDL_DestroyTexture(old_texture)
             output['texture'] = sdl2.SDL_CreateTexture(
                 renderer,
-                sdl2.SDL_PIXELFORMAT_RGBA32,
+                sdl2.SDL_PIXELFORMAT_ARGB8888,
                 sdl2.SDL_TEXTUREACCESS_STREAMING,
                 source_w,
                 source_h,
@@ -258,14 +258,28 @@ class MultiHeadController:
                 out_w = ctypes.c_int(0)
                 out_h = ctypes.c_int(0)
                 sdl2.SDL_GetRendererOutputSize(renderer, out_w, out_h)
+                r_info = sdl2.SDL_RendererInfo()
+                renderer_name = 'unknown'
+                if sdl2.SDL_GetRendererInfo(renderer, r_info) == 0 and r_info.name:
+                    renderer_name = r_info.name.decode(errors='replace')
+                tex_fmt = ctypes.c_uint32(0)
+                tex_access = ctypes.c_int(0)
+                tex_w = ctypes.c_int(0)
+                tex_h = ctypes.c_int(0)
+                sdl2.SDL_QueryTexture(texture, tex_fmt, tex_access, tex_w, tex_h)
                 log.info(
-                    'Mirror frame debug: src=%dx%d pitch=%d bytes=%d dst=%dx%d display=%s',
+                    'Mirror frame debug: src=%dx%d pitch=%d bytes=%d dst=%dx%d tex=%dx%d fmt=0x%08x access=%d renderer=%s display=%s',
                     width,
                     height,
                     pitch,
                     len(frame_bytes),
                     out_w.value,
                     out_h.value,
+                    tex_w.value,
+                    tex_h.value,
+                    tex_fmt.value,
+                    tex_access.value,
+                    renderer_name,
                     str(output.get('display_index')),
                 )
                 self._mirror_debug_logged = True
@@ -289,15 +303,7 @@ class MultiHeadController:
                         x = 0
                         y = (out_h.value - h) // 2
                     dst_rect = sdl2.SDL_Rect(x, y, max(1, w), max(1, h))
-            sdl2.SDL_RenderCopyEx(
-                renderer,
-                texture,
-                None,
-                dst_rect,
-                0.0,
-                None,
-                sdl2.SDL_FLIP_VERTICAL,
-            )
+            sdl2.SDL_RenderCopy(renderer, texture, None, dst_rect)
             sdl2.SDL_RenderPresent(renderer)
 
     def is_mirror_window_id(self, window_id: int) -> bool:
