@@ -4,7 +4,41 @@ Date: 2026-05-12
 
 ## Update: GL-native mirror_all (current approach)
 
-The previous SDL_Renderer-per-mirror-window approach was unreliable across
+### Iteration 2 (post-validation refinement)
+
+Validation on Fedora 37/GNOME after iteration 1 showed:
+- `mirror_all` worked correctly when toggled while NOT fullscreen.
+- `mirror_all` toggled while fullscreen left the window pinned at one display
+  (`window=1920x1080` instead of `1920x2160`), so one tile-blit rect landed
+  offscreen → "half-screen-band" appearance. Fixed by adding explicit
+  `mirror_all` handling to the `set_display_mode` fullscreen branch.
+- After running through Image Showcase and Video Showcase effects, the mirror
+  display occasionally collapsed to "half-screen on both monitors". Root
+  cause: webcam overlay and HUD render after `_render` returns, painting
+  directly to the bound framebuffer at logical (1920×1080) viewport. With
+  the previous design, `_render` had already done the tile-blit and left the
+  spanned window's framebuffer bound, so HUD/webcam landed only on the
+  bottom-left quadrant of the spanned canvas.
+- Win11 / Fedora 44/MATE crashed with
+  `MultiHeadController object has no attribute 'display_layouts'` because
+  their drop-in submodule pointer pre-dated the new `display_layouts`
+  property/method on the controller.
+
+### Iteration 2 fixes
+
+1. Compose-then-tile pipeline. In mirror mode, `_render` now writes the
+   final per-display image into `_fbo_a` and leaves it bound at logical
+   viewport. The main loop renders webcam and HUD overlays into that same
+   FBO, then performs one tile-blit at the end of the frame. This keeps
+   webcam/HUD on every display.
+2. Backward-compatible accessors. `App._multihead_layouts()` and
+   `App._multihead_mirror_layout()` use `getattr` to fall back to the
+   controller's private `_display_layouts` attribute and to derive rects
+   manually if the public helpers are missing. This unblocks runs against
+   older drop-in submodule pointers (no immediate `git submodule update`
+   required to avoid the crash).
+
+
 Fedora 37/GNOME, Fedora 44/MATE, and Windows 11 — it would initialize cleanly
 (one Mirror frame debug line confirming texture creation, format, and
 software/accelerated renderer pickup) and then go black or hang/crash. Root
