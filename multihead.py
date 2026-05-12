@@ -213,6 +213,9 @@ class MultiHeadController:
                 sdl2.SDL_DestroyRenderer(renderer)
                 sdl2.SDL_DestroyWindow(window)
                 continue
+            # Avoid compositor-dependent alpha blending; mirror should be opaque.
+            sdl2.SDL_SetTextureBlendMode(texture, sdl2.SDL_BLENDMODE_NONE)
+            sdl2.SDL_SetTextureAlphaMod(texture, 255)
             sdl2.SDL_ShowWindow(window)
             sdl2.SDL_RaiseWindow(window)
             self._mirror_outputs.append(
@@ -247,6 +250,9 @@ class MultiHeadController:
                 source_w,
                 source_h,
             )
+            if output['texture'] is not None:
+                sdl2.SDL_SetTextureBlendMode(output['texture'], sdl2.SDL_BLENDMODE_NONE)
+                sdl2.SDL_SetTextureAlphaMod(output['texture'], 255)
 
     def present_mirror_outputs(self, frame_bytes: bytes, width: int, height: int) -> None:
         """Present a copied frame to all active mirror windows."""
