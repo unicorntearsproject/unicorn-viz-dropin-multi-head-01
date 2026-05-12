@@ -32,6 +32,7 @@ class MultiHeadController:
         self._readback_index = 0
         self._readback_primed = False
         self._readback_size = 0
+        self._mirror_debug_logged = False
 
     @property
     def requested_mode(self) -> str:
@@ -199,7 +200,7 @@ class MultiHeadController:
                 continue
             texture = sdl2.SDL_CreateTexture(
                 renderer,
-                sdl2.SDL_PIXELFORMAT_RGB24,
+                sdl2.SDL_PIXELFORMAT_RGBA32,
                 sdl2.SDL_TEXTUREACCESS_STREAMING,
                 source_w,
                 source_h,
@@ -236,7 +237,7 @@ class MultiHeadController:
                 sdl2.SDL_DestroyTexture(old_texture)
             output['texture'] = sdl2.SDL_CreateTexture(
                 renderer,
-                sdl2.SDL_PIXELFORMAT_RGB24,
+                sdl2.SDL_PIXELFORMAT_RGBA32,
                 sdl2.SDL_TEXTUREACCESS_STREAMING,
                 source_w,
                 source_h,
@@ -246,13 +247,28 @@ class MultiHeadController:
         """Present a copied frame to all active mirror windows."""
         if not self._mirror_outputs:
             return
-        pitch = width * 3
+        pitch = width * 4
         src_ar = width / max(height, 1)
         for output in self._mirror_outputs:
             texture = output.get('texture')
             renderer = output.get('renderer')
             if texture is None or renderer is None:
                 continue
+            if not self._mirror_debug_logged:
+                out_w = ctypes.c_int(0)
+                out_h = ctypes.c_int(0)
+                sdl2.SDL_GetRendererOutputSize(renderer, out_w, out_h)
+                log.info(
+                    'Mirror frame debug: src=%dx%d pitch=%d bytes=%d dst=%dx%d display=%s',
+                    width,
+                    height,
+                    pitch,
+                    len(frame_bytes),
+                    out_w.value,
+                    out_h.value,
+                    str(output.get('display_index')),
+                )
+                self._mirror_debug_logged = True
             sdl2.SDL_UpdateTexture(texture, None, frame_bytes, pitch)
             sdl2.SDL_RenderClear(renderer)
             out_w = ctypes.c_int(0)
@@ -322,13 +338,13 @@ class MultiHeadController:
 
     def read_shared_frame(self, ctx: moderngl.Context, width: int, height: int) -> bytes | None:
         """Capture one shared frame for recording/mirror using staged readback."""
-        size = width * height * 3
+        size = width * height * 4
         self.ensure_readback_pbos(ctx, size)
         if len(self._readback_pbos) != 2:
             return None
         write_idx = self._readback_index
         read_idx = 1 - write_idx
-        ctx.screen.read_into(self._readback_pbos[write_idx], components=3, alignment=1)
+        ctx.screen.read_into(self._readback_pbos[write_idx], components=4, alignment=1)
         frame: bytes | None = None
         if self._readback_primed:
             frame = self._readback_pbos[read_idx].read()
