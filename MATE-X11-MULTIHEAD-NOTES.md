@@ -37,15 +37,13 @@ Validation on Fedora 37/GNOME after iteration 1 showed:
    manually if the public helpers are missing. This unblocks runs against
    older drop-in submodule pointers (no immediate `git submodule update`
    required to avoid the crash).
+### Iteration 1 background
 
-
-Fedora 37/GNOME, Fedora 44/MATE, and Windows 11 — it would initialize cleanly
-(one Mirror frame debug line confirming texture creation, format, and
-software/accelerated renderer pickup) and then go black or hang/crash. Root
-cause analysis pointed at multi-window SDL_Renderer + GL context interaction:
-even when the mirror window's renderer is software, the secondary windows'
-event/frame pumping interferes with the main GL context's pipeline (PBO
-readback stalls, presentation hangs, X11/Wayland WM placement quirks).
+The previous SDL mirror implementation (per-display SDL renderer windows) was
+tested on Fedora 37/GNOME, Fedora 44/MATE, and Windows 11. It initialized
+cleanly (including Mirror frame diagnostics) but then frequently went black,
+hung, or crashed. Root-cause analysis pointed at multi-window SDL_Renderer
+interaction with the main GL context and readback path.
 
 The current implementation in `unicornviz/app.py` replaces that path with a
 **single-window, GL-native mirror**:
