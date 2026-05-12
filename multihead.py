@@ -33,6 +33,7 @@ class MultiHeadController:
         self._readback_primed = False
         self._readback_size = 0
         self._mirror_debug_logged = False
+        self._readback_fallback_logged = False
 
     @property
     def requested_mode(self) -> str:
@@ -350,11 +351,21 @@ class MultiHeadController:
             return None
         write_idx = self._readback_index
         read_idx = 1 - write_idx
-        ctx.screen.read_into(self._readback_pbos[write_idx], components=4, alignment=1)
-        frame: bytes | None = None
-        if self._readback_primed:
-            frame = self._readback_pbos[read_idx].read()
-        else:
-            self._readback_primed = True
-        self._readback_index = read_idx
-        return frame
+        try:
+            ctx.screen.read_into(self._readback_pbos[write_idx], components=4, alignment=1)
+            frame: bytes | None = None
+            if self._readback_primed:
+                frame = self._readback_pbos[read_idx].read()
+            else:
+                self._readback_primed = True
+            self._readback_index = read_idx
+            return frame
+        except Exception as exc:
+            # Some drivers/backends intermittently fail buffer mapping.
+            # Fall back to direct read to keep mirror mode alive.
+            if not self._readback_fallback_logged:
+                log.warning('Mirror readback fallback active after PBO failure: %s', exc)
+                self._readback_fallback_logged = True
+            self._readback_primed = False
+            self._readback_index = 0
+            return ctx.screen.read(components=4, alignment=1)
