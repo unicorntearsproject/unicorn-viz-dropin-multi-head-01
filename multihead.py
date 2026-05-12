@@ -192,16 +192,18 @@ class MultiHeadController:
             if not window:
                 log.warning('Failed to create mirror window for display %d: %s', idx, sdl2.SDL_GetError().decode())
                 continue
-            renderer = sdl2.SDL_CreateRenderer(window, -1, sdl2.SDL_RENDERER_ACCELERATED)
+            # Prefer software renderer for stability across compositor/driver stacks.
+            renderer = sdl2.SDL_CreateRenderer(window, -1, sdl2.SDL_RENDERER_SOFTWARE)
             if not renderer:
-                renderer = sdl2.SDL_CreateRenderer(window, -1, sdl2.SDL_RENDERER_SOFTWARE)
+                renderer = sdl2.SDL_CreateRenderer(window, -1, sdl2.SDL_RENDERER_ACCELERATED)
             if not renderer:
                 log.warning('Failed to create mirror renderer for display %d: %s', idx, sdl2.SDL_GetError().decode())
                 sdl2.SDL_DestroyWindow(window)
                 continue
             texture = sdl2.SDL_CreateTexture(
                 renderer,
-                sdl2.SDL_PIXELFORMAT_ARGB8888,
+                # GL readback bytes are RGBA; ABGR8888 matches this byte order.
+                sdl2.SDL_PIXELFORMAT_ABGR8888,
                 sdl2.SDL_TEXTUREACCESS_STREAMING,
                 source_w,
                 source_h,
@@ -211,6 +213,8 @@ class MultiHeadController:
                 sdl2.SDL_DestroyRenderer(renderer)
                 sdl2.SDL_DestroyWindow(window)
                 continue
+            sdl2.SDL_ShowWindow(window)
+            sdl2.SDL_RaiseWindow(window)
             self._mirror_outputs.append(
                 {
                     'window': window,
@@ -238,7 +242,7 @@ class MultiHeadController:
                 sdl2.SDL_DestroyTexture(old_texture)
             output['texture'] = sdl2.SDL_CreateTexture(
                 renderer,
-                sdl2.SDL_PIXELFORMAT_ARGB8888,
+                sdl2.SDL_PIXELFORMAT_ABGR8888,
                 sdl2.SDL_TEXTUREACCESS_STREAMING,
                 source_w,
                 source_h,
@@ -284,7 +288,9 @@ class MultiHeadController:
                     str(output.get('display_index')),
                 )
                 self._mirror_debug_logged = True
-            sdl2.SDL_UpdateTexture(texture, None, frame_bytes, pitch)
+            if sdl2.SDL_UpdateTexture(texture, None, frame_bytes, pitch) != 0:
+                log.warning('Mirror update failed on display %s: %s', str(output.get('display_index')), sdl2.SDL_GetError().decode())
+                continue
             sdl2.SDL_RenderClear(renderer)
             out_w = ctypes.c_int(0)
             out_h = ctypes.c_int(0)
@@ -304,7 +310,9 @@ class MultiHeadController:
                         x = 0
                         y = (out_h.value - h) // 2
                     dst_rect = sdl2.SDL_Rect(x, y, max(1, w), max(1, h))
-            sdl2.SDL_RenderCopy(renderer, texture, None, dst_rect)
+            if sdl2.SDL_RenderCopy(renderer, texture, None, dst_rect) != 0:
+                log.warning('Mirror render-copy failed on display %s: %s', str(output.get('display_index')), sdl2.SDL_GetError().decode())
+                continue
             sdl2.SDL_RenderPresent(renderer)
 
     def is_mirror_window_id(self, window_id: int) -> bool:
