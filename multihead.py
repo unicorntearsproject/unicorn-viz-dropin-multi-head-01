@@ -51,6 +51,22 @@ class MultiHeadController:
     def has_mirror_outputs(self) -> bool:
         return bool(self._mirror_outputs)
 
+    @property
+    def display_layouts(self) -> list[tuple[int, int, int, int]]:
+        """Return cached display layouts (x, y, w, h) per SDL display index."""
+        return list(self._display_layouts)
+
+    def mirror_layout(self, window_origin_x: int, window_origin_y: int) -> list[tuple[int, int, int, int]]:
+        """Return per-display rects translated to window-local coordinates.
+
+        Used by the GL-native mirror path: the main window spans all displays,
+        and each display's region is a viewport within that spanned canvas.
+        """
+        rects: list[tuple[int, int, int, int]] = []
+        for x, y, w, h in self._display_layouts:
+            rects.append((x - window_origin_x, y - window_origin_y, w, h))
+        return rects
+
     def log_video_displays(self, width: int, height: int) -> int:
         """Log visible SDL displays and return detected display count."""
         count = int(sdl2.SDL_GetNumVideoDisplays())
