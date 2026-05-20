@@ -26,7 +26,12 @@ class MultiHeadController:
         self._display_index = 0
         self._display_mode_requested = str(cfg.get('window', 'display_mode', default='single')).lower()
         self._display_mode = 'single'
+        self._excluded_display_indices = self._parse_excluded_display_indices(
+            cfg.get('window', 'exclude_display_indices', default=[])
+        )
+        self._display_layouts_all: list[tuple[int, int, int, int]] = []
         self._display_layouts: list[tuple[int, int, int, int]] = []
+        self._active_display_indices: list[int] = []
         self._mirror_outputs: list[dict[str, Any]] = []
         self._readback_pbos: list[moderngl.Buffer] = []
         self._readback_index = 0
@@ -34,6 +39,58 @@ class MultiHeadController:
         self._readback_size = 0
         self._mirror_debug_logged = False
         self._readback_fallback_logged = False
+
+    def _parse_excluded_display_indices(self, raw: Any) -> set[int]:
+        """Parse config into a set of raw SDL display indices to exclude."""
+        if raw in (None, '', [], (), set()):
+            return set()
+        values: list[Any]
+        if isinstance(raw, (list, tuple, set)):
+            values = list(raw)
+        elif isinstance(raw, str):
+            values = [part.strip() for part in raw.split(',') if part.strip()]
+        else:
+            values = [raw]
+
+        parsed: set[int] = set()
+        for value in values:
+            try:
+                parsed.add(int(value))
+            except (TypeError, ValueError):
+                log.warning('Ignoring invalid window.exclude_display_indices entry: %r', value)
+        return {idx for idx in parsed if idx >= 0}
+
+    def _refresh_active_layouts(self) -> None:
+        """Refresh the layout set used by span/mirror operations."""
+        use_filtered = self._display_mode in {'span_all', 'mirror_all'} and bool(self._excluded_display_indices)
+        if not use_filtered:
+            self._active_display_indices = list(range(len(self._display_layouts_all)))
+            self._display_layouts = list(self._display_layouts_all)
+            return
+
+        active_items = [
+            (idx, layout)
+            for idx, layout in enumerate(self._display_layouts_all)
+            if idx not in self._excluded_display_indices
+        ]
+        if not active_items:
+            log.warning(
+                'window.exclude_display_indices removed every display for %s; ignoring excludes',
+                self._display_mode,
+            )
+            self._active_display_indices = list(range(len(self._display_layouts_all)))
+            self._display_layouts = list(self._display_layouts_all)
+            return
+
+        self._active_display_indices = [idx for idx, _layout in active_items]
+        self._display_layouts = [layout for _idx, layout in active_items]
+
+    def _active_layout_items(self) -> list[tuple[int, int, int, int, int]]:
+        """Return (display_index, x, y, w, h) tuples for active span/mirror displays."""
+        return [
+            (idx, x, y, w, h)
+            for idx, (x, y, w, h) in zip(self._active_display_indices, self._display_layouts, strict=False)
+        ]
 
     @property
     def requested_mode(self) -> str:
@@ -70,15 +127,18 @@ class MultiHeadController:
     def log_video_displays(self, width: int, height: int) -> int:
         """Log visible SDL displays and return detected display count."""
         count = int(sdl2.SDL_GetNumVideoDisplays())
+        self._display_layouts_all = []
         self._display_layouts = []
+        self._active_display_indices = []
         if count <= 0:
             log.warning('SDL reported no video displays; defaulting to display 0')
-            self._display_layouts = [(0, 0, width, height)]
+            self._display_layouts_all = [(0, 0, width, height)]
+            self._refresh_active_layouts()
             return 1
         for idx in range(count):
             bounds = sdl2.SDL_Rect()
             if sdl2.SDL_GetDisplayBounds(idx, bounds) == 0:
-                self._display_layouts.append((bounds.x, bounds.y, bounds.w, bounds.h))
+                self._display_layouts_all.append((bounds.x, bounds.y, bounds.w, bounds.h))
                 log.info(
                     'Display %d: origin=(%d,%d) size=%dx%d',
                     idx,
@@ -87,6 +147,13 @@ class MultiHeadController:
                     bounds.w,
                     bounds.h,
                 )
+        self._refresh_active_layouts()
+        if self._excluded_display_indices and self._display_mode in {'span_all', 'mirror_all'}:
+            log.info(
+                'Excluding displays from %s: %s',
+                self._display_mode,
+                ', '.join(str(idx) for idx in sorted(self._excluded_display_indices)),
+            )
         return count
 
     def resolve_display_mode(self) -> str:
@@ -123,8 +190,8 @@ class MultiHeadController:
 
     def display_bounds(self, display_index: int, width: int, height: int) -> sdl2.SDL_Rect | None:
         """Return display bounds for selected SDL display, if available."""
-        if 0 <= display_index < len(self._display_layouts):
-            x, y, w, h = self._display_layouts[display_index]
+        if 0 <= display_index < len(self._display_layouts_all):
+            x, y, w, h = self._display_layouts_all[display_index]
             bounds = sdl2.SDL_Rect()
             bounds.x = x
             bounds.y = y
@@ -193,7 +260,7 @@ class MultiHeadController:
             return
         source_w = max(1, width)
         source_h = max(1, height)
-        for idx, (x, y, w, h) in enumerate(self._display_layouts):
+        for idx, x, y, w, h in self._active_layout_items():
             if idx == self._display_index:
                 continue
             flags = sdl2.SDL_WINDOW_BORDERLESS | sdl2.SDL_WINDOW_SHOWN
@@ -347,7 +414,7 @@ class MultiHeadController:
     def rebuild_multihead_outputs(self, width: int, height: int, title: str) -> int:
         """Refresh display topology and mirror windows after SDL display events."""
         self.log_video_displays(width, height)
-        if self._display_index_requested < 0 or self._display_index_requested >= len(self._display_layouts):
+        if self._display_index_requested < 0 or self._display_index_requested >= len(self._display_layouts_all):
             self._display_index = 0
         else:
             self._display_index = self._display_index_requested

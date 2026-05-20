@@ -8,20 +8,21 @@ This is a **subsystem drop-in**, not a visual effect. It provides all multi-moni
 
 ## Display Modes
 
-| Mode        | Behaviour |
-|-------------|-----------|
-| `single`    | Render on one display (selected by `display_index`) |
-| `span_all`  | One window stretched across the combined bounds of all displays |
-| `mirror_all`| Main display + live mirrored output on every other display |
+- `single`: render on one display selected by `display_index`
+- `span_all`: one window stretched across the combined bounds of all included displays
+- `mirror_all`: one logical canvas mirrored across all included displays
 
 `span_all` and `mirror_all` are most reliable on **X11**. On Wayland compositors, explicit window placement may be ignored by design. Unicorn Viz automatically attempts an X11 fallback when a multi-head mode is requested and Wayland is the active driver.
+
+If `exclude_display_indices` is unset or empty, all multi-head behavior remains exactly as before. When set, only `span_all` and `mirror_all` ignore those raw SDL display indices; `single` mode still uses the full display list and `display_index` semantics do not change.
 
 ## Config
 
 ```toml
 [window]
 display_mode  = "single"   # single | span_all | mirror_all
-display_index = 0          # SDL display index for "single" and "mirror_all"
+display_index = 0          # raw SDL display index for single mode selection
+exclude_display_indices = [0]  # optional: omit displays from span_all / mirror_all only
 ```
 
 ## Architecture Notes
