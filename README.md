@@ -59,3 +59,12 @@ original implementation.
 ## Tags
 
 Subsystem — not discoverable as a playlist effect.
+
+---
+
+## Structured Docs
+
+- docs/operations.md
+- docs/configuration.md
+- docs/integration.md
+- docs/troubleshooting.md
