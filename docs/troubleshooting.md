@@ -30,6 +30,21 @@ Troubleshooting guide for display topology and mirroring behavior.
 - Reduce render resolution scale.
 - Reduce mirror display count where possible.
 
+## Deferred Debug Instrumentation (Keep for JIC)
+
+If mirror or HUD placement regressions reappear during display hot-plug testing,
+add a temporary on-screen debug readout showing:
+
+- current `display_mode`
+- current `_display_index`
+- current window origin + size (`_window_origin_x/_window_origin_y`, `_window_width/_window_height`)
+- active mirror rect list (`_mirror_rects`)
+- computed primary overlay viewport (`_primary_display_viewport()`)
+
+Reason: this makes stale topology/viewport drift obvious immediately after
+`SDL_DISPLAYEVENT_CONNECTED` / `SDL_DISPLAYEVENT_DISCONNECTED`, without needing
+external logs.
+
 ## Related Docs
 
 - ../README.md
