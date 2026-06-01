@@ -20,6 +20,13 @@ log = logging.getLogger(__name__)
 class MultiHeadController:
     """Own multi-monitor policy, mirror outputs, and shared readback buffers."""
 
+    HELP_ENTRIES: list[tuple[str, str, str]] = [
+        ('Display Modes', 'x', 'Single display'),
+        ('Display Modes', 'X', 'Span all'),
+        ('Display Modes', 'Ctrl+X', 'Mirror all'),
+        ('Display Modes', 'Alt+X', 'Config default'),
+    ]
+
     def __init__(self, cfg: Config) -> None:
         self._cfg = cfg
         self._display_index_requested = int(cfg.get('window', 'display_index', default=0))
