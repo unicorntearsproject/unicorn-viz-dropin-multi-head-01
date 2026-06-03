@@ -22,7 +22,7 @@ class MultiHeadController:
 
     HELP_ENTRIES: list[tuple[str, str, str]] = [
         ('Display Modes', 'x', 'Single display'),
-        ('Display Modes', 'X', 'Span all'),
+        ('Display Modes', 'Shift+X', 'Span all'),
         ('Display Modes', 'Ctrl+X', 'Mirror all'),
         ('Display Modes', 'Alt+X', 'Config default'),
     ]
