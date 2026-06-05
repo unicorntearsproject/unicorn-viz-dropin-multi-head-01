@@ -21,6 +21,8 @@ exclude_display_indices = [0]    # optional, *_included modes only
 
 - `display_mode` supports: `single`, `span_included`, `span_all`,
   `mirror_included`, `mirror_all`.
+- Legacy aliases are accepted: `span` -> `span_included`,
+  `mirror` -> `mirror_included`.
 - `exclude_display_indices` applies to `span_included` and `mirror_included` only.
 - `single` mode still uses full display list semantics.
 - `span_all` and `mirror_all` always use all detected displays.

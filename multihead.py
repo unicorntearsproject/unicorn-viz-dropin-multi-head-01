@@ -32,6 +32,10 @@ class MultiHeadController:
         'mirror_included',
         'mirror_all',
     )
+    DISPLAY_MODE_ALIASES: dict[str, str] = {
+        'span': 'span_included',
+        'mirror': 'mirror_included',
+    }
 
     HELP_ENTRIES: list[tuple[str, str, str]] = [
         ('Display Modes', 'x', 'Single display'),
@@ -180,6 +184,14 @@ class MultiHeadController:
 
     def resolve_display_mode(self) -> str:
         """Resolve the configured display mode against supported values."""
+        alias = self.DISPLAY_MODE_ALIASES.get(self._display_mode_requested)
+        if alias is not None:
+            log.info(
+                'Normalizing legacy display_mode=%r -> %s',
+                self._display_mode_requested,
+                alias,
+            )
+            self._display_mode_requested = alias
         allowed = set(self.DISPLAY_MODES)
         if self._display_mode_requested not in allowed:
             log.warning(

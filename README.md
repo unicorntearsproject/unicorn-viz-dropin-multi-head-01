@@ -38,6 +38,8 @@ all the other included displays.
 - `span_all`: one window stretched across the combined bounds of all displays
 - `mirror_included`: one logical canvas mirrored across included displays
 - `mirror_all`: one logical canvas mirrored across all displays
+- Alias support: `span` maps to `span_included`, `mirror` maps to
+	`mirror_included`.
 
 All span/mirror modes are most reliable on **X11**. On Wayland compositors,
 explicit window placement may be ignored by design. Unicorn Viz automatically
