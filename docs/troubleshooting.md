@@ -2,7 +2,7 @@
 
 Owner: Drop-in Maintainers
 Status: active
-Last updated: 2026-05-24
+Last updated: 2026-06-05
 
 ## Purpose
 
@@ -22,13 +22,22 @@ Troubleshooting guide for display topology and mirroring behavior.
 
 ### Reserved operator display still mirrors content
 
-- Confirm `display_mode` is `span_all` or `mirror_all`.
+- Confirm `display_mode` is `span_included` or `mirror_included`.
 - Confirm `exclude_display_indices` uses raw SDL display numbers.
+- If using `span_all` or `mirror_all`, note that excludes are intentionally ignored.
 
 ### Mirror performance is poor
 
 - Reduce render resolution scale.
 - Reduce mirror display count where possible.
+
+### Span mode framing/scaling still looks off
+
+- Current status: known open issue (2026-06-05), deferred for dedicated fix pass.
+- Symptom: content frame (for example Candy Frame border) can show visible
+	offset/scaling drift in some span layouts.
+- Workaround: use `mirror_included` / `mirror_all` or `single` for
+	presentation-critical runs until span alignment patch lands.
 
 ## Deferred Debug Instrumentation (Keep for JIC)
 

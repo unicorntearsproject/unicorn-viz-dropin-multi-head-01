@@ -2,7 +2,7 @@
 
 Owner: Drop-in Maintainers
 Status: active
-Last updated: 2026-05-24
+Last updated: 2026-06-05
 
 ## Purpose
 
@@ -10,16 +10,18 @@ Operational runbook for display topology and mirror/span behavior.
 
 ## Startup Checklist
 
-1. Set `[window] display_mode` (`single`, `span_all`, `mirror_all`).
+1. Set `[window] display_mode` (`single`, `span_included`, `span_all`, `mirror_included`, `mirror_all`).
 2. Set `display_index` for `single` mode selection.
-3. Optionally set `exclude_display_indices` for span/mirror modes.
+3. Optionally set `exclude_display_indices` for included modes.
 4. Start Unicorn Viz and verify display topology in logs.
 
 ## Mode Behavior
 
 - `single`: one display selected by raw SDL display index.
-- `span_all`: one canvas across included displays.
-- `mirror_all`: mirrored output across included displays.
+- `span_included`: one canvas across included displays.
+- `span_all`: one canvas across all displays.
+- `mirror_included`: mirrored output across included displays.
+- `mirror_all`: mirrored output across all displays.
 
 ## Operator Guidance
 

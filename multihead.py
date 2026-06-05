@@ -16,15 +16,30 @@ from unicornviz.config import Config
 
 log = logging.getLogger(__name__)
 
+DROPIN_CAPABILITIES = {
+    'name': 'multihead',
+    'class_symbol': 'MultiHeadController',
+}
+
 
 class MultiHeadController:
     """Own multi-monitor policy, mirror outputs, and shared readback buffers."""
 
+    DISPLAY_MODES: tuple[str, ...] = (
+        'single',
+        'span_included',
+        'span_all',
+        'mirror_included',
+        'mirror_all',
+    )
+
     HELP_ENTRIES: list[tuple[str, str, str]] = [
         ('Display Modes', 'x', 'Single display'),
-        ('Display Modes', 'Shift+X', 'Span all'),
-        ('Display Modes', 'Ctrl+X', 'Mirror all'),
-        ('Display Modes', 'Alt+X', 'Config default'),
+        ('Display Modes', 'Shift+X', 'Cycle display modes'),
+        ('Display Modes', 'Ctrl+X', 'Span included displays'),
+        ('Display Modes', 'Ctrl+Shift+X', 'Span all displays'),
+        ('Display Modes', 'Alt+X', 'Mirror included displays'),
+        ('Display Modes', 'Alt+Shift+X', 'Mirror all displays'),
     ]
 
     def __init__(self, cfg: Config) -> None:
@@ -69,7 +84,7 @@ class MultiHeadController:
 
     def _refresh_active_layouts(self) -> None:
         """Refresh the layout set used by span/mirror operations."""
-        use_filtered = self._display_mode in {'span_all', 'mirror_all'} and bool(self._excluded_display_indices)
+        use_filtered = self._display_mode in {'span_included', 'mirror_included'} and bool(self._excluded_display_indices)
         if not use_filtered:
             self._active_display_indices = list(range(len(self._display_layouts_all)))
             self._display_layouts = list(self._display_layouts_all)
@@ -155,7 +170,7 @@ class MultiHeadController:
                     bounds.h,
                 )
         self._refresh_active_layouts()
-        if self._excluded_display_indices and self._display_mode in {'span_all', 'mirror_all'}:
+        if self._excluded_display_indices and self._display_mode in {'span_included', 'mirror_included'}:
             log.info(
                 'Excluding displays from %s: %s',
                 self._display_mode,
@@ -165,7 +180,7 @@ class MultiHeadController:
 
     def resolve_display_mode(self) -> str:
         """Resolve the configured display mode against supported values."""
-        allowed = {'single', 'span_all', 'mirror_all'}
+        allowed = set(self.DISPLAY_MODES)
         if self._display_mode_requested not in allowed:
             log.warning(
                 'Requested display_mode=%r is invalid; using single',
@@ -176,13 +191,17 @@ class MultiHeadController:
         self._display_mode = self._display_mode_requested
         return self._display_mode
 
+    def supported_display_modes(self) -> tuple[str, ...]:
+        """Return the full list of runtime-supported display modes."""
+        return self.DISPLAY_MODES
+
     def resolve_display_index(self, width: int, height: int) -> int:
         """Resolve configured display index against available SDL displays."""
         count = self.log_video_displays(width, height)
         if self._display_index_requested < 0 or self._display_index_requested >= count:
-            if self._display_mode == 'span_all':
+            if self._display_mode in {'span_included', 'span_all'}:
                 log.debug(
-                    'Requested display_index=%d is out of range in span_all mode; using display 0 for restore position',
+                    'Requested display_index=%d is out of range in span mode; using display 0 for restore position',
                     self._display_index_requested,
                 )
             else:
@@ -238,7 +257,7 @@ class MultiHeadController:
         """Move existing SDL window according to current display mode policy."""
         if window is None:
             return
-        if self._display_mode == 'span_all':
+        if self._display_mode in {'span_included', 'span_all'}:
             x, y, w, h = self.all_display_bounds(width, height)
             sdl2.SDL_SetWindowPosition(window, x, y)
             sdl2.SDL_SetWindowSize(window, w, h)
@@ -263,7 +282,7 @@ class MultiHeadController:
     def create_mirror_outputs(self, title: str, width: int, height: int) -> None:
         """Create lightweight SDL windows that mirror the main output."""
         self.destroy_mirror_outputs()
-        if self._display_mode != 'mirror_all' or len(self._display_layouts) <= 1:
+        if self._display_mode not in {'mirror_included', 'mirror_all'} or len(self._display_layouts) <= 1:
             return
         source_w = max(1, width)
         source_h = max(1, height)
@@ -425,7 +444,7 @@ class MultiHeadController:
             self._display_index = 0
         else:
             self._display_index = self._display_index_requested
-        if self._display_mode == 'mirror_all':
+        if self._display_mode in {'mirror_included', 'mirror_all'}:
             self.create_mirror_outputs(title, width, height)
             self.resize_mirror_textures(width, height)
         return self._display_index
