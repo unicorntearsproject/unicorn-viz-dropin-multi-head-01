@@ -1,11 +1,13 @@
 """Multi-head display controller.
 
-This module encapsulates monitor discovery, display-mode policy (single/span/mirror),
-mirror window lifecycle, and staged shared-frame readback buffers.
+This module encapsulates monitor discovery, display-mode policy (single/span/mirror)
+and staged shared-frame readback buffers. Mirror-mode presentation is GL-native
+tile-blitting done by the main app (single window, no per-display SDL windows);
+see MATE-X11-MULTIHEAD-NOTES.md for why an earlier per-window approach was
+abandoned.
 """
 from __future__ import annotations
 
-import ctypes
 import logging
 from typing import Any
 
@@ -58,12 +60,10 @@ class MultiHeadController:
         self._display_layouts_all: list[tuple[int, int, int, int]] = []
         self._display_layouts: list[tuple[int, int, int, int]] = []
         self._active_display_indices: list[int] = []
-        self._mirror_outputs: list[dict[str, Any]] = []
         self._readback_pbos: list[moderngl.Buffer] = []
         self._readback_index = 0
         self._readback_primed = False
         self._readback_size = 0
-        self._mirror_debug_logged = False
         self._readback_fallback_logged = False
 
     def _parse_excluded_display_indices(self, raw: Any) -> set[int]:
@@ -129,10 +129,6 @@ class MultiHeadController:
     @property
     def display_index(self) -> int:
         return self._display_index
-
-    @property
-    def has_mirror_outputs(self) -> bool:
-        return bool(self._mirror_outputs)
 
     @property
     def display_layouts(self) -> list[tuple[int, int, int, int]]:
@@ -277,188 +273,13 @@ class MultiHeadController:
         x, y = self.window_position_for_display(self._display_index, width, height)
         sdl2.SDL_SetWindowPosition(window, x, y)
 
-    def destroy_mirror_outputs(self) -> None:
-        """Destroy auxiliary mirror windows and SDL renderers/textures."""
-        for output in self._mirror_outputs:
-            texture = output.get('texture')
-            renderer = output.get('renderer')
-            window = output.get('window')
-            if texture is not None:
-                sdl2.SDL_DestroyTexture(texture)
-            if renderer is not None:
-                sdl2.SDL_DestroyRenderer(renderer)
-            if window is not None:
-                sdl2.SDL_DestroyWindow(window)
-        self._mirror_outputs.clear()
-
-    def create_mirror_outputs(self, title: str, width: int, height: int) -> None:
-        """Create lightweight SDL windows that mirror the main output."""
-        self.destroy_mirror_outputs()
-        if self._display_mode not in {'mirror_included', 'mirror_all'} or len(self._display_layouts) <= 1:
-            return
-        source_w = max(1, width)
-        source_h = max(1, height)
-        for idx, x, y, w, h in self._active_layout_items():
-            if idx == self._display_index:
-                continue
-            flags = sdl2.SDL_WINDOW_BORDERLESS | sdl2.SDL_WINDOW_SHOWN
-            window = sdl2.SDL_CreateWindow(
-                f'{title} Mirror'.encode(),
-                x,
-                y,
-                w,
-                h,
-                flags,
-            )
-            if not window:
-                log.warning('Failed to create mirror window for display %d: %s', idx, sdl2.SDL_GetError().decode())
-                continue
-            # Prefer software renderer for stability across compositor/driver stacks.
-            renderer = sdl2.SDL_CreateRenderer(window, -1, sdl2.SDL_RENDERER_SOFTWARE)
-            if not renderer:
-                renderer = sdl2.SDL_CreateRenderer(window, -1, sdl2.SDL_RENDERER_ACCELERATED)
-            if not renderer:
-                log.warning('Failed to create mirror renderer for display %d: %s', idx, sdl2.SDL_GetError().decode())
-                sdl2.SDL_DestroyWindow(window)
-                continue
-            texture = sdl2.SDL_CreateTexture(
-                renderer,
-                # GL readback bytes are RGBA; ABGR8888 matches this byte order.
-                sdl2.SDL_PIXELFORMAT_ABGR8888,
-                sdl2.SDL_TEXTUREACCESS_STREAMING,
-                source_w,
-                source_h,
-            )
-            if not texture:
-                log.warning('Failed to create mirror texture for display %d: %s', idx, sdl2.SDL_GetError().decode())
-                sdl2.SDL_DestroyRenderer(renderer)
-                sdl2.SDL_DestroyWindow(window)
-                continue
-            # Avoid compositor-dependent alpha blending; mirror should be opaque.
-            sdl2.SDL_SetTextureBlendMode(texture, sdl2.SDL_BLENDMODE_NONE)
-            sdl2.SDL_SetTextureAlphaMod(texture, 255)
-            sdl2.SDL_ShowWindow(window)
-            sdl2.SDL_RaiseWindow(window)
-            self._mirror_outputs.append(
-                {
-                    'window': window,
-                    'renderer': renderer,
-                    'texture': texture,
-                    'display_index': idx,
-                    'window_id': int(sdl2.SDL_GetWindowID(window)),
-                }
-            )
-        if self._mirror_outputs:
-            log.info('Mirror outputs active on displays: %s', ', '.join(str(int(output['display_index'])) for output in self._mirror_outputs))
-
-    def resize_mirror_textures(self, width: int, height: int) -> None:
-        """Recreate mirror textures when the main output size changes."""
-        if not self._mirror_outputs:
-            return
-        source_w = max(1, width)
-        source_h = max(1, height)
-        for output in self._mirror_outputs:
-            old_texture = output.get('texture')
-            renderer = output.get('renderer')
-            if renderer is None:
-                continue
-            if old_texture is not None:
-                sdl2.SDL_DestroyTexture(old_texture)
-            output['texture'] = sdl2.SDL_CreateTexture(
-                renderer,
-                sdl2.SDL_PIXELFORMAT_ABGR8888,
-                sdl2.SDL_TEXTUREACCESS_STREAMING,
-                source_w,
-                source_h,
-            )
-            if output['texture'] is not None:
-                sdl2.SDL_SetTextureBlendMode(output['texture'], sdl2.SDL_BLENDMODE_NONE)
-                sdl2.SDL_SetTextureAlphaMod(output['texture'], 255)
-
-    def present_mirror_outputs(self, frame_bytes: bytes, width: int, height: int) -> None:
-        """Present a copied frame to all active mirror windows."""
-        if not self._mirror_outputs:
-            return
-        pitch = width * 4
-        src_ar = width / max(height, 1)
-        for output in self._mirror_outputs:
-            texture = output.get('texture')
-            renderer = output.get('renderer')
-            if texture is None or renderer is None:
-                continue
-            if not self._mirror_debug_logged:
-                out_w = ctypes.c_int(0)
-                out_h = ctypes.c_int(0)
-                sdl2.SDL_GetRendererOutputSize(renderer, out_w, out_h)
-                r_info = sdl2.SDL_RendererInfo()
-                renderer_name = 'unknown'
-                if sdl2.SDL_GetRendererInfo(renderer, r_info) == 0 and r_info.name:
-                    renderer_name = r_info.name.decode(errors='replace')
-                tex_fmt = ctypes.c_uint32(0)
-                tex_access = ctypes.c_int(0)
-                tex_w = ctypes.c_int(0)
-                tex_h = ctypes.c_int(0)
-                sdl2.SDL_QueryTexture(texture, tex_fmt, tex_access, tex_w, tex_h)
-                log.info(
-                    'Mirror frame debug: src=%dx%d pitch=%d bytes=%d dst=%dx%d tex=%dx%d fmt=0x%08x access=%d renderer=%s display=%s',
-                    width,
-                    height,
-                    pitch,
-                    len(frame_bytes),
-                    out_w.value,
-                    out_h.value,
-                    tex_w.value,
-                    tex_h.value,
-                    tex_fmt.value,
-                    tex_access.value,
-                    renderer_name,
-                    str(output.get('display_index')),
-                )
-                self._mirror_debug_logged = True
-            if sdl2.SDL_UpdateTexture(texture, None, frame_bytes, pitch) != 0:
-                log.warning('Mirror update failed on display %s: %s', str(output.get('display_index')), sdl2.SDL_GetError().decode())
-                continue
-            sdl2.SDL_RenderClear(renderer)
-            out_w = ctypes.c_int(0)
-            out_h = ctypes.c_int(0)
-            sdl2.SDL_GetRendererOutputSize(renderer, out_w, out_h)
-            dst_rect = None
-            if out_w.value > 0 and out_h.value > 0:
-                dst_ar = out_w.value / out_h.value
-                if abs(dst_ar - src_ar) > 1e-3:
-                    if dst_ar > src_ar:
-                        h = out_h.value
-                        w = int(round(h * src_ar))
-                        x = (out_w.value - w) // 2
-                        y = 0
-                    else:
-                        w = out_w.value
-                        h = int(round(w / src_ar))
-                        x = 0
-                        y = (out_h.value - h) // 2
-                    dst_rect = sdl2.SDL_Rect(x, y, max(1, w), max(1, h))
-            if sdl2.SDL_RenderCopy(renderer, texture, None, dst_rect) != 0:
-                log.warning('Mirror render-copy failed on display %s: %s', str(output.get('display_index')), sdl2.SDL_GetError().decode())
-                continue
-            sdl2.SDL_RenderPresent(renderer)
-
-    def is_mirror_window_id(self, window_id: int) -> bool:
-        """Return True if the given SDL window id belongs to a mirror window."""
-        for output in self._mirror_outputs:
-            if int(output.get('window_id', -1)) == window_id:
-                return True
-        return False
-
-    def rebuild_multihead_outputs(self, width: int, height: int, title: str) -> int:
-        """Refresh display topology and mirror windows after SDL display events."""
+    def rebuild_multihead_outputs(self, width: int, height: int) -> int:
+        """Refresh display topology after SDL display events."""
         self.log_video_displays(width, height)
         if self._display_index_requested < 0 or self._display_index_requested >= len(self._display_layouts_all):
             self._display_index = 0
         else:
             self._display_index = self._display_index_requested
-        if self._display_mode in {'mirror_included', 'mirror_all'}:
-            self.create_mirror_outputs(title, width, height)
-            self.resize_mirror_textures(width, height)
         return self._display_index
 
     def release_readback_pbos(self) -> None:

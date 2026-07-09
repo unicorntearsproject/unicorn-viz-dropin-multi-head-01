@@ -65,14 +65,26 @@ Why this is robust:
 - Mirror rects are computed by `MultiHeadController.mirror_layout()` and
   recomputed on resize and on runtime mode-switch hotkeys.
 
-## Legacy approach (kept for reference / fallback testing)
+## Legacy approach — removed 2026-07-09
 
-`MultiHeadController.create_mirror_outputs()` and friends still exist and can
-create per-display SDL windows with a software renderer + ABGR8888 streaming
-texture, fed by a PBO-backed readback of the main framebuffer. They are no
-longer invoked by `App._create_mirror_outputs()` (now a no-op).
+`MultiHeadController.create_mirror_outputs()` and friends (`destroy_mirror_outputs`,
+`resize_mirror_textures`, `present_mirror_outputs`, `is_mirror_window_id`, the
+`_mirror_outputs` list, `has_mirror_outputs`) have been **deleted** from
+`multihead.py`, along with their no-op call sites in `unicornviz/app.py`
+(`App._create_mirror_outputs()` etc.). They had been dead code (the app-side
+methods were already no-ops) since the GL-native tile-blit mirror shipped;
+this cleanup removed the dead pathway itself rather than just its callers.
 
-Known issues with the legacy approach:
+This decision was reconfirmed, not just executed mechanically: a 2026-07-08
+platform audit investigating unrelated control-room-01/dj-mixer-01 black-screen
+reports on Fedora/GNOME/Wayland considered reviving a per-monitor-window
+approach for `mirror_all` (to let GNOME/Mutter suppress its panel, which it
+won't do for a borderless spanning window — see
+`docs/audits/2026-07-08-render-pipeline-platform-audit.md` §4). That
+investigation is what surfaced this exact legacy code and its documented
+failure history below, and confirmed it should stay deleted, not resurrected.
+
+Known issues with the legacy approach (why it was abandoned originally):
 
 - On X11 GNOME / MATE / KDE: secondary windows go black or freeze after the
   first frame. PBO `read_into` may stall when other windows pump frames.
@@ -81,19 +93,31 @@ Known issues with the legacy approach:
 - Window-event spam (`HIDDEN`/`EXPOSED`) used to cause recreate-storms; that
   was patched but did not fix the underlying GL+multi-window stall.
 
-If anyone needs to revisit: revert `App._create_mirror_outputs()` from the
-no-op stub to call `self._multihead.create_mirror_outputs(...)`, keep
-`need_frame_for_mirror` enabled, and the legacy SDL_Renderer path still works
-end-to-end as previously committed (commit `569d426` in `multi-head-01`).
+The full implementation is preserved in git history if ever needed again —
+see commit `569d426` in `multi-head-01`, and the pre-removal state at the
+commit immediately prior to the 2026-07-09 "clean up dead mirror pathways"
+commit. Do not resurrect this specific architecture (CPU readback → PBO →
+per-window `SDL_RENDERER_SOFTWARE` streaming texture) without a real fix for
+the black-screen/freeze pattern above — that pattern reproduced on three
+platforms and was never resolved, it was replaced.
 
-## Alternative approaches considered (not implemented)
+## Alternative approaches considered (not implemented) — for the panel-suppression question, not mirror rendering generally
 
-1. Shared GL context across multiple SDL windows (`SDL_GL_SHARE_WITH_CURRENT_CONTEXT`)
-   - Pros: each mirror window owns a real GL context, can blit a shared texture
-     directly without readback.
-   - Cons: SDL2 + moderngl shared contexts are platform-dependent; Wayland
-     compositor restrictions, NVIDIA/Intel driver quirks. Significantly more
-     code, harder to debug.
+If per-monitor real windows for `mirror_all`/`span_all` are ever revisited
+(e.g. specifically to let the compositor suppress its panel, since a
+borderless spanning window can't get real per-output fullscreen state), the
+options are, in preference order:
+
+1. **Preferred if revisited: shared GL context across multiple SDL windows**
+   (`SDL_GL_SHARE_WITH_CURRENT_CONTEXT`) — each per-monitor window owns a
+   real GL context and renders natively, sharing GL resources with the main
+   context; no CPU readback needed at all. This is architecturally distinct
+   from the removed legacy approach above (which read the framebuffer back
+   to the CPU and streamed it into software-rendered windows) and should not
+   inherit its failure history automatically — but it's unproven in this
+   codebase. Cons: SDL2 + moderngl shared contexts are platform-dependent;
+   Wayland compositor restrictions, NVIDIA/Intel driver quirks. Significantly
+   more code, harder to debug than the current single-window design.
 
 2. Wayland compositor mirror via wl_output cloning
    - Pros: zero application-side cost.
