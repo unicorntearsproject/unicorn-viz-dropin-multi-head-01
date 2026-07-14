@@ -1,5 +1,8 @@
 # multi-head-01 — Multi-Head Display Controller
 
+**Version 1.0.0-rc.1**
+
+
 A system drop-in for [unicorn-viz](https://github.com/iDoMeteor/unicorn-viz).
 
 ## Description
@@ -83,3 +86,7 @@ Subsystem — not discoverable as a playlist effect.
 - docs/configuration.md
 - docs/integration.md
 - docs/troubleshooting.md
+
+## Changelog
+
+- **1.0.0-rc.1** — initial versioned release.
