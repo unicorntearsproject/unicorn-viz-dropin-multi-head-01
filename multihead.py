@@ -8,7 +8,7 @@ abandoned.
 """
 from __future__ import annotations
 
-__version__ = '1.0.0-rc.1'
+__version__ = '1.1.0-rc.1'
 
 import logging
 from typing import Any
@@ -50,15 +50,27 @@ class MultiHeadController:
         ('Display Modes', 'Alt+Shift+X', 'Mirror all displays'),
     ]
 
-    def __init__(self, cfg: Config) -> None:
+    def __init__(self, cfg: Config, runtime_excludes: 'list[int] | None' = None) -> None:
         self._cfg = cfg
         self._display_index_requested = int(cfg.get('window', 'display_index', default=0))
         self._display_index = 0
         self._display_mode_requested = str(cfg.get('window', 'display_mode', default='single')).lower()
         self._display_mode = 'single'
-        self._excluded_display_indices = self._parse_excluded_display_indices(
-            cfg.get('window', 'exclude_display_indices', default=[])
-        )
+        # ``runtime_excludes`` is the operator's monitor-editor choice persisted
+        # by control-room-01 under ``multihead.monitor_editor.exclude_display_
+        # indices`` in the runtime store. When present it *replaces* the
+        # config.toml list (same override-else-config rule the editor itself
+        # uses to seed its checkboxes). Before 1.1.0 nothing ever read that
+        # key, so "Monitor excludes saved (restart required)" never did
+        # anything -- the 2026-09-05 multi-head audit's #1 finding.
+        self._excludes_source = 'config'
+        if isinstance(runtime_excludes, list):
+            self._excluded_display_indices = self._parse_excluded_display_indices(runtime_excludes)
+            self._excludes_source = 'runtime'
+        else:
+            self._excluded_display_indices = self._parse_excluded_display_indices(
+                cfg.get('window', 'exclude_display_indices', default=[])
+            )
         self._display_layouts_all: list[tuple[int, int, int, int]] = []
         self._display_layouts: list[tuple[int, int, int, int]] = []
         self._active_display_indices: list[int] = []
@@ -119,6 +131,16 @@ class MultiHeadController:
             (idx, x, y, w, h)
             for idx, (x, y, w, h) in zip(self._active_display_indices, self._display_layouts, strict=False)
         ]
+
+    @property
+    def excluded_display_indices(self) -> set[int]:
+        """Raw SDL display indices excluded from *_included modes (a copy)."""
+        return set(self._excluded_display_indices)
+
+    @property
+    def excludes_source(self) -> str:
+        """``'runtime'`` when the monitor editor's saved list is in force, else ``'config'``."""
+        return self._excludes_source
 
     @property
     def requested_mode(self) -> str:

@@ -1,6 +1,6 @@
 # multi-head-01 — Multi-Head Display Controller
 
-**Version 1.0.0-rc.1**
+**Version 1.1.0-rc.1**
 
 
 A system drop-in for [unicorn-viz](https://github.com/iDoMeteor/unicorn-viz).
@@ -89,4 +89,13 @@ Subsystem — not discoverable as a playlist effect.
 
 ## Changelog
 
+- **1.1.0-rc.1** — `MultiHeadController(cfg, runtime_excludes=...)`: an
+  optional list of SDL display indices that *replaces* config.toml's
+  `window.exclude_display_indices` when given. Core (beta.113) passes the
+  monitor editor's persisted choice (`multihead.monitor_editor.exclude_
+  display_indices` in the runtime store) here on construction, so saving
+  excludes in the Control Room's monitor editor finally takes effect on
+  the next launch -- before this, nothing ever read that key (2026-09-05
+  audit, finding #1). New read-only `excluded_display_indices` /
+  `excludes_source` properties, and the drop-in's first test suite.
 - **1.0.0-rc.1** — initial versioned release.
