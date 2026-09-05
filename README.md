@@ -1,6 +1,6 @@
 # multi-head-01 — Multi-Head Display Controller
 
-**Version 1.1.0-rc.1**
+**Version 1.1.0-rc.2**
 
 
 A system drop-in for [unicorn-viz](https://github.com/iDoMeteor/unicorn-viz).
@@ -89,6 +89,24 @@ Subsystem — not discoverable as a playlist effect.
 
 ## Changelog
 
+- **1.1.0-rc.2** — **Control Room 'displays' page (P3 of
+  `docs/planning/control-room-drop-in-integration-plan-2026-09-05.md`).**
+  A new `set_vj_api(api)` registers a tier-2-`draw` `OperatorPage`
+  (`page='displays'`, `owner='multi-head-01'`) with mode buttons, a
+  display map/list, and include/exclude/save controls -- replacing
+  control-room-01's hardcoded DISPLAY panel and monitor-editor modal,
+  which read this controller's state via a duck-typed `vj_api` reach
+  instead of the drop-in owning its own surface. Adds
+  `all_detected_displays()` (a live SDL query, unlike the cached
+  `display_layouts`, so a hot-plugged monitor shows in the map without a
+  restart -- though *acting* on it still needs one), and a staged
+  `pending_excluded_display_indices` set (`toggle_pending_exclude()`,
+  `reset_pending_excludes()`, `save_pending_excludes()`) seeded from the
+  active excludes at construction -- editing it never touches the live
+  `excluded_display_indices`/layouts, same "restart required" contract
+  the old modal had; only `save_pending_excludes()` persists it, for
+  `runtime_excludes` above to pick up on the next launch.
+  `shutdown()` unregisters the page.
 - **1.1.0-rc.1** — `MultiHeadController(cfg, runtime_excludes=...)`: an
   optional list of SDL display indices that *replaces* config.toml's
   `window.exclude_display_indices` when given. Core (beta.113) passes the
