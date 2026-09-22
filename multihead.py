@@ -8,7 +8,7 @@ abandoned.
 """
 from __future__ import annotations
 
-__version__ = '1.1.0-rc.2'
+__version__ = '1.1.0-rc.3'
 
 import logging
 from typing import Any
@@ -270,22 +270,49 @@ class MultiHeadController:
         return True
 
     def reset_pending_excludes(self) -> None:
-        """Discard staged edits, reverting to config.toml's exclude list."""
-        self._pending_excluded_display_indices = self._parse_excluded_display_indices(
-            self._cfg.get('window', 'exclude_display_indices', default=[])
-        )
+        """Discard staged edits, reverting to the currently *active* exclude
+        set (not config.toml -- if a prior SAVE already promoted the active
+        set from the runtime store, config.toml may be stale or irrelevant;
+        "discard my edits" means "back to what's actually running", found
+        2026-09-21 as the Displays page's one real bug)."""
+        self._pending_excluded_display_indices = set(self._excluded_display_indices)
 
-    def save_pending_excludes(self) -> list[int]:
-        """Persist the staged excludes for the next launch to pick up.
+    def save_pending_excludes(self) -> tuple[list[int], bool]:
+        """Persist the staged excludes and apply them live (2026-09-22).
 
-        Writes the same runtime-store key ``runtime_excludes`` reads at
-        construction, so SAVE here plus a restart is the whole round trip.
+        Promotes the staged set to active, persists it under the same
+        runtime-store key ``runtime_excludes`` reads at construction (so a
+        later full restart sees the same value), then re-invokes the
+        *current* display mode through vj_api -- ``App.set_display_mode()``
+        already refreshes display layout and repositions the live window on
+        every mode-hotkey press, so applying an exclude change needs no new
+        machinery, just reusing that path. Previously this only took effect
+        after a full app restart, which was the state that most likely read
+        as "buggy": the map badge updated immediately but nothing about the
+        actual span/mirror geometry did, while a mode hotkey on the same
+        page *was* already live.
+
+        Returns ``(indices, applied)`` -- ``applied`` is False when the
+        relayout call itself failed (the excludes are still saved either
+        way; only the live geometry refresh may not have happened).
         """
         indices = sorted(int(i) for i in self._pending_excluded_display_indices)
         setter = getattr(self._vj_api, 'set_runtime_state', None)
         if callable(setter):
             setter('multihead.monitor_editor.exclude_display_indices', indices)
-        return indices
+        self._excluded_display_indices = set(self._pending_excluded_display_indices)
+        self._excludes_source = 'runtime'
+        applied = True
+        mode_setter = getattr(self._vj_api, 'set_display_mode', None)
+        if callable(mode_setter):
+            try:
+                mode_setter(self._display_mode)
+            except Exception as exc:
+                log.warning('multi-head-01: live exclude relayout failed: %s', exc)
+                applied = False
+        else:
+            applied = False
+        return indices, applied
 
     def set_vj_api(self, api: Any) -> None:
         """Inject the VJApi instance after construction (app.py builds this
@@ -355,6 +382,20 @@ class MultiHeadController:
         draw.text((bx + max(4, (bw - tw) // 2), by + max(2, (bh - th) // 2) - tb[1]), label, font=font, fill=theme.text)
         canvas.add_hotspot(action, payload, (bx, by, bw, bh))
 
+    def _window_display_index(self, getter_name: str) -> 'int | None':
+        """Read the mixer's/Control Room's current display index via
+        vj_api, or None if that window isn't open / the surface is
+        unavailable -- used only to badge the map, never to make a
+        decision, so a missing getter just means no badge, not an error."""
+        getter = getattr(self._vj_api, getter_name, None)
+        if not callable(getter):
+            return None
+        try:
+            value = getter()
+        except Exception:
+            return None
+        return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
     def _draw_displays_page(self, canvas: Any) -> None:
         """Tier-2 draw for the 'displays' page: mode buttons, a display map,
         list, and include/exclude/save controls. Replaces control-room-01's
@@ -383,13 +424,15 @@ class MultiHeadController:
             )
 
         map_y = y + 32 + 16
-        controls_h = 96
+        controls_h = 138
         map_h = max(120, h - (map_y - y) - controls_h - 16)
         map_w = int(w * 0.6)
         map_rect = (x, map_y, map_w, map_h)
         mx, my, mw_, mh_ = map_rect
         draw.rounded_rectangle((mx, my, mx + mw_, my + mh_), radius=12, fill=theme.panel_alt + (255,), outline=theme.line + (255,), width=1)
 
+        cr_display = self._window_display_index('control_room_display_index')
+        mixer_display = self._window_display_index('mixer_display_index')
         if displays:
             min_x = min(d[1] for d in displays)
             min_y = min(d[2] for d in displays)
@@ -415,6 +458,13 @@ class MultiHeadController:
                 draw.text((rx + 8, ry + 6), f'D{did}  {dw}x{dh}', font=small, fill=theme.text)
                 if is_effectively_excluded:
                     draw.text((rx + 8, ry + rh - 18), 'EXCLUDED', font=small, fill=theme.warn)
+                occupants = ' '.join(
+                    tag for tag, here in (('CR', cr_display == did), ('MIX', mixer_display == did)) if here
+                )
+                if occupants:
+                    obbox = draw.textbbox((0, 0), occupants, font=small)
+                    ow = obbox[2] - obbox[0]
+                    draw.text((rx + rw - 6 - ow, ry + 6), occupants, font=small, fill=theme.accent_2)
                 canvas.add_hotspot('select', list_idx, (rx, ry, rw, rh))
         else:
             tb = draw.textbbox((0, 0), 'No displays detected', font=heading)
@@ -433,6 +483,11 @@ class MultiHeadController:
                 break
             is_selected = idx == self._page_selected_idx
             tag = 'EXCLUDED' if did in pending else 'INCLUDED'
+            occupants = ' '.join(
+                t for t, here in (('CR', cr_display == did), ('MIX', mixer_display == did)) if here
+            )
+            if occupants:
+                tag = f'{tag}  {occupants}'
             fill = theme.accent + (52,) if is_selected else theme.panel + (200,)
             draw.rounded_rectangle((list_x + 8, row_y - 2, list_x + list_w - 8, row_y + 22), radius=8, fill=fill, outline=theme.line + (255,), width=1)
             draw.text((list_x + 14, row_y + 3), f'D{did}  {dw}x{dh} @ ({dx},{dy})  {tag}', font=small, fill=theme.text)
@@ -452,7 +507,16 @@ class MultiHeadController:
         self._draw_button(canvas, (x + 366, by_, 170, 30), 'SAVE', 'save_excludes', None, accent=theme.success)
         behavior = self._MODE_BEHAVIOR.get(active_mode, '')
         draw.text((x + 16, by_ + 42), f'Mode: {active_mode} -- {behavior}', font=small, fill=theme.text_dim)
-        draw.text((x + 16, by_ + 62), 'Saved excludes apply on next launch.', font=small, fill=theme.warn)
+
+        # Window placement row (2026-09-22): move the mixer / Control Room's
+        # own operator window to the selected display. Live either way --
+        # if the target window is currently open it closes and reopens on
+        # the new display immediately; if it's closed the choice is only
+        # remembered for its next open.
+        move_y = by_ + 62
+        draw.text((x + 16, move_y - 4), 'Move a window to the selected display:', font=small, fill=theme.text_dim)
+        self._draw_button(canvas, (x + 16, move_y + 14, 200, 30), 'MOVE MIXER HERE', 'move_mixer', None)
+        self._draw_button(canvas, (x + 226, move_y + 14, 240, 30), 'MOVE CONTROL ROOM HERE', 'move_control_room', None)
 
     def _displays_page_action(self, action: str, payload: Any) -> str | None:
         """Control Room buttons -> the same set_display_mode() the mode
@@ -477,8 +541,35 @@ class MultiHeadController:
             self.reset_pending_excludes()
             return 'Monitor excludes reset'
         if action == 'save_excludes':
-            self.save_pending_excludes()
-            return 'Monitor excludes saved (restart required)'
+            _indices, applied = self.save_pending_excludes()
+            return 'Monitor excludes saved' if applied else 'Monitor excludes saved (live relayout failed -- check logs)'
+        if action in ('move_mixer', 'move_control_room'):
+            displays = self.all_detected_displays()
+            if not displays:
+                return 'No displays detected'
+            sel = max(0, min(self._page_selected_idx, len(displays) - 1))
+            did = int(displays[sel][0])
+            setter_name = 'set_mixer_display' if action == 'move_mixer' else 'set_control_room_display'
+            window_label = 'Mixer' if action == 'move_mixer' else 'Control Room'
+            other_getter_name = 'control_room_display_index' if action == 'move_mixer' else 'mixer_display_index'
+            other_label = 'Control Room' if action == 'move_mixer' else 'Mixer'
+            setter = getattr(self._vj_api, setter_name, None)
+            if not callable(setter):
+                return f'{window_label}: unavailable'
+            # Deliberate double-assign is allowed (consensus 2026-09-22): the
+            # operator may want both windows on the same display, e.g. one
+            # hidden behind the other during setup. We warn, we don't refuse.
+            collision = self._window_display_index(other_getter_name) == did
+            try:
+                ok, message = setter(did)
+            except Exception as exc:
+                log.warning('multi-head-01: %s failed: %s', setter_name, exc)
+                return f'{window_label}: move failed'
+            if not message:
+                message = f'{window_label}: moved to display {did}' if ok else f'{window_label}: move failed'
+            if ok and collision:
+                message = f'{message} (warning: {other_label} is also on display {did})'
+            return message
         return None
 
     def resolve_display_index(self, width: int, height: int) -> int:

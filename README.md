@@ -1,6 +1,6 @@
 # multi-head-01 — Multi-Head Display Controller
 
-**Version 1.1.0-rc.2**
+**Version 1.1.0-rc.3**
 
 
 A system drop-in for [unicorn-viz](https://github.com/iDoMeteor/unicorn-viz).
@@ -89,6 +89,23 @@ Subsystem — not discoverable as a playlist effect.
 
 ## Changelog
 
+- **1.1.0-rc.3** — **Displays page: live-applied excludes, a RESET fix, and
+  per-window monitor assignment** (multihead Control Room surface consensus,
+  `docs/planning/multihead-control-room-surface-2026-09-21.md`).
+  `save_pending_excludes()` now re-invokes `vj_api.set_display_mode()` after
+  persisting, so an exclude/include change relayouts the live window
+  immediately instead of needing a restart; it returns
+  `(indices, applied)` so the page can flash a distinct message if the
+  live relayout itself fails. `reset_pending_excludes()` now reverts to the
+  currently *active* exclude set instead of stale `config.toml`, fixing the
+  one real bug the investigation found (a prior SAVE could leave RESET
+  reverting to the wrong state). Two new buttons, "MOVE MIXER HERE" and
+  "MOVE CONTROL ROOM HERE", call the new `vj_api.set_mixer_display()` /
+  `set_control_room_display()` (core beta.155) for the selected display; a
+  deliberate double-assign (both windows on the same display) is allowed
+  and flashes a warning rather than being refused. The map and list now
+  badge each display with `CR`/`MIX` for whichever operator window
+  currently occupies it, via a defensive `_window_display_index()` reader.
 - **1.1.0-rc.2** — **Control Room 'displays' page (P3 of
   `docs/planning/control-room-drop-in-integration-plan-2026-09-05.md`).**
   A new `set_vj_api(api)` registers a tier-2-`draw` `OperatorPage`
